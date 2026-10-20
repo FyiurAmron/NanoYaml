@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit - thin launcher for _tools/check-text-hygiene.sh.
+# Staged text files must end with a newline and carry no trailing
+# whitespace. Install once per clone:  git config core.hooksPath .githooks
+# Pure ASCII.
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+files=()
+while IFS= read -r file; do
+    files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if ! bash "$ROOT/_tools/check-text-hygiene.sh" "${files[@]}"; then
+    echo "Refusing commit: end every text file with a newline and strip trailing whitespace."
+    exit 1
+fi
+
+exit 0

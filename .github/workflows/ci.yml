@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  style:
+    name: Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # The style rules live in the repository, not in a config file that
+      # drifts from them: dotnet format for the .editorconfig rules, the
+      # Roslyn lint for the rest, text hygiene for the files around the code.
+      - name: Check style
+        run: bash _tools/check-style.sh
+
+      - name: Test
+        run: dotnet test test/NanoYamlTests.csproj --nologo
+
+  build-test-pack:
+    needs: style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore test/NanoYamlTests.csproj
+
+      - name: Build
+        run: dotnet build test/NanoYamlTests.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test test/NanoYamlTests.csproj -c Release --no-build --no-restore
+
+      - name: Pack
+        run: dotnet pack NanoYaml.csproj -c Release --no-build --no-restore -o "${RUNNER_TEMP}/packages"
