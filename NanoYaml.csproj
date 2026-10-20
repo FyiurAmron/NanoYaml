@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The strict YAML subset shared by Bowcki and other consumers. Kept as a
+       standalone packable project so it can ship on NuGet without the game. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>13</LangVersion>
+    <RootNamespace>Vaxquis.NanoYaml</RootNamespace>
+    <Nullable>annotations</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- NuGet metadata. The version is the profile version documented in the
+       README; bump it when the parser or profile changes. -->
+  <PropertyGroup>
+    <PackageId>NanoYaml</PackageId>
+    <Version>0.1.0</Version>
+    <PackageReleaseNotes>Initial release.</PackageReleaseNotes>
+    <Authors>FyiurAmron</Authors>
+    <Title>NanoYaml</Title>
+    <Description>A strict, YAML 1.2.2-compatible parser and serializer for .NET.</Description>
+    <PackageTags>yaml;parser;serializer;strict;configuration</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>NanoYaml-48x48-alpha.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/FyiurAmron/NanoYaml</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/FyiurAmron/NanoYaml</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- The tests and the style tooling are separate projects and are not part
+       of the package. -->
+  <ItemGroup>
+    <Compile Remove="test/**/*.cs" />
+    <Compile Remove="_tools/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="LICENSE" Pack="true" PackagePath="\" />
+    <None Include="assets/NanoYaml-48x48-alpha.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
