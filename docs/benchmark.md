@@ -19,8 +19,14 @@ than the other competing references.
   settled before the measured window.
 - The corpus is written with NanoYaml's own serializer, minus the profile
   preamble, so every file is a NanoYaml-subset document by construction.
-- The parsed document is a generic tree in all three cases: scalars stay
-  strings, mappings stay mappings, sequences stay sequences.
+- In case1 and case2 the parsed document is a generic tree for every
+  parser: scalars stay strings, mappings stay mappings, sequences stay
+  sequences.
+- In case3 and case4 every .NET parser deserializes into the same typed
+  object model (`_tools/bench/Models.cs`): classes with string, enum,
+  integer, floating-point, decimal, boolean and nullable properties, lists,
+  dictionaries and nested objects. Generation checks that each file survives
+  a typed NanoYaml round trip byte for byte.
 
 ## The corpora
 
@@ -28,10 +34,13 @@ than the other competing references.
 |---|---|---|---|---|---|
 | case1 | 20261022 | 1000 | 1.64 MB | 71 B - 2.8 KB | small documents, 3 to 8 root keys, depth up to 8 |
 | case2 | 20261023 | 10 | 3.74 MB | 273 KB - 599 KB | the same shapes, large |
+| case3 | 20261024 | 1000 | 2.38 MB | 459 B - 5.9 KB | small typed documents |
+| case4 | 20261025 | 10 | 3.51 MB | 83 KB - 662 KB | typed documents, large |
 
 The data mixes plain words, numbers, booleans, nulls, empty strings,
 punctuation that needs quoting, non-ASCII text, and long sentences. Keys
-are unique within a document.
+are unique within a document. StrictYAML has no typed model, so it runs on
+case1 and case2 only.
 
 ## Results
 

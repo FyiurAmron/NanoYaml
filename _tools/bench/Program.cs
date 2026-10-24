@@ -47,12 +47,15 @@ Usage:
 
 Commands:
   generate <root> [small-files] [small-budget] [large-files] [large-budget]
-      Generate both corpora with fixed seeds. Defaults: case1 has
+      Generate all corpora with fixed seeds. Defaults: case1 has
       {Corpus.SmallFiles} files and budget {Corpus.SmallBudget}; case2 has
       {Corpus.LargeFiles} files and budget {Corpus.LargeBudget}.
+      Typed corpora have fixed sizes: case3 has {Corpus.TypedSmallFiles} files
+      and budget {Corpus.TypedSmallBudget}; case4 has {Corpus.TypedLargeFiles}
+      files and budget {Corpus.TypedLargeBudget}.
 
   run <parser> <root>
-      Run the five-round parse/serialize benchmark for both corpora; emit JSON.
+      Run the five-round parse/serialize benchmark for every corpus; emit JSON.
 
   profile <parser> <root> [corpus] [iterations] [read|write]
       Repeat a read or serialization workload. Defaults: corpus=case2,
@@ -64,8 +67,8 @@ Commands:
       operation; both measures parse plus serialize.
 
 Parser for run, profile, and throughput: nano, yamldotnet, or sharpyaml.
-Corpus: case1 or case2.
-generate creates <root>/case1 and <root>/case2; other commands expect both
+Corpus: case1 or case2 (untyped trees), case3 or case4 (typed objects).
+generate creates <root>/case1 to <root>/case4; other commands expect the
 corpus directories to exist. Parser arguments immediately follow the command.
 
 All arguments are positional and must be supplied in the order shown.");
@@ -86,7 +89,7 @@ All arguments are positional and must be supplied in the order shown.");
         string name = args.Length > 3 ? args[3] : "case2";
         int iterations = args.Length > 4 ? int.Parse(args[4]) : 20;
         (Func<string, object?> Parse, Func<object?, string> Write, string Label) backend =
-            Backend(parser);
+            Backend(parser, name);
         bool write = args.Length > 5 && args[5] == "write";
         string directory = Path.Combine(root, name);
         List<string> files = [.. Directory.GetFiles(directory, "*.yaml").Order().Select(File.ReadAllText)];
@@ -116,7 +119,7 @@ All arguments are positional and must be supplied in the order shown.");
         }
 
         (Func<string, object?> Parse, Func<object?, string> Write, string Label) backend =
-            Backend(parser);
+            Backend(parser, name);
 
         string directory = Path.Combine(root, name);
         List<string> files = [.. Directory.GetFiles(directory, "*.yaml").Order().Select(File.ReadAllText)];
@@ -190,13 +193,15 @@ All arguments are positional and must be supplied in the order shown.");
         int largeBudget = args.Length > 5 ? int.Parse(args[5]) : Corpus.LargeBudget;
         Corpus.Write(Path.Combine(root, "case1"), 20261022, smallFiles, smallBudget);
         Corpus.Write(Path.Combine(root, "case2"), 20261023, largeFiles, largeBudget);
+        Corpus.WriteTyped(Path.Combine(root, "case3"), 20261024, Corpus.TypedSmallFiles, Corpus.TypedSmallBudget);
+        Corpus.WriteTyped(Path.Combine(root, "case4"), 20261025, Corpus.TypedLargeFiles, Corpus.TypedLargeBudget);
         return 0;
     }
 
     static int Run(string root, string parser) {
-        (Func<string, object?> Parse, Func<object?, string> Write, string Label) backend =
-            Backend(parser);
-        foreach (string name in new List<string> { "case1", "case2" }) {
+        foreach (string name in Corpus.Names) {
+            (Func<string, object?> Parse, Func<object?, string> Write, string Label) backend =
+                Backend(parser, name);
             string directory = Path.Combine(root, name);
             List<string> files = [.. Directory.GetFiles(directory, "*.yaml").Order().Select(File.ReadAllText)];
             if (!files.Any()) {
@@ -265,13 +270,25 @@ All arguments are positional and must be supplied in the order shown.");
     static object? SharpYamlParse(string text) =>
         YamlSerializer.Deserialize<object>(text);
 
+    static object? NanoParseTyped(string text) =>
+        NanoYaml.Deserialize<World>(text);
+
+    static object? YamlDotNetParseTyped(string text) =>
+        deserializer.Deserialize<World>(text);
+
+    static object? SharpYamlParseTyped(string text) =>
+        YamlSerializer.Deserialize<World>(text);
+
     static string SharpYamlWrite(object? tree) =>
         YamlSerializer.Serialize(tree);
 
-    static (Func<string, object?> Parse, Func<object?, string> Write, string Label) Backend(string parser) =>
-        parser switch {
-            "yamldotnet" => (YamlDotNetParse, YamlDotNetWrite, "YamlDotNet"),
-            "sharpyaml" => (SharpYamlParse, SharpYamlWrite, "SharpYaml"),
-            _ => (NanoParse, NanoWrite, "NanoYaml"),
+    static (Func<string, object?> Parse, Func<object?, string> Write, string Label) Backend(string parser, string corpus) =>
+        (parser, Corpus.IsTyped(corpus)) switch {
+            ("yamldotnet", false) => (YamlDotNetParse, YamlDotNetWrite, "YamlDotNet"),
+            ("yamldotnet", true) => (YamlDotNetParseTyped, YamlDotNetWrite, "YamlDotNet"),
+            ("sharpyaml", false) => (SharpYamlParse, SharpYamlWrite, "SharpYaml"),
+            ("sharpyaml", true) => (SharpYamlParseTyped, SharpYamlWrite, "SharpYaml"),
+            (_, false) => (NanoParse, NanoWrite, "NanoYaml"),
+            (_, true) => (NanoParseTyped, NanoWrite, "NanoYaml"),
         };
 }

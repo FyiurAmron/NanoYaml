@@ -15,6 +15,17 @@ static class Corpus {
     public const int SmallBudget = 200;
     public const int LargeBudget = 2000000;
 
+    public const int TypedSmallFiles = 1000;
+    public const int TypedLargeFiles = 10;
+
+    public const int TypedSmallBudget = 2;
+    public const int TypedLargeBudget = 600;
+
+    public static readonly List<string> Names = ["case1", "case2", "case3", "case4"];
+
+    public static bool IsTyped(string name) =>
+        name is "case3" or "case4";
+
     static readonly List<string> words = [
         "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
         "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
@@ -34,15 +45,70 @@ static class Corpus {
         "русский текст", "עברית", "한국어",
     ];
 
-    public static void Write(string root, int seed, int files, int budget) {
+    public static void Write(string root, int seed, int files, int budget) =>
+        WriteAll(root, seed, files, rng => Serialize(BuildRoot(rng, budget)));
+
+    public static void WriteTyped(string root, int seed, int files, int budget) =>
+        WriteAll(root, seed, files, rng => {
+            World world = BuildWorld(rng, budget);
+            string text = Serialize(world);
+            string again = Serialize(NanoYaml.Deserialize<World>(text));
+            return again == text ? text : throw new InvalidOperationException($"typed round trip differs in {root}");
+        });
+
+    static void WriteAll(string root, int seed, int files, Func<Random, string> build) {
         Directory.CreateDirectory(root);
         Random rng = new(seed);
         for (int i = 0; i < files; i++) {
-            object? tree = BuildRoot(rng, budget);
-            string text = Serialize(tree);
-            File.WriteAllText(Path.Combine(root, $"case-{i + 1:D4}.yaml"), text, new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(root, $"case-{i + 1:D4}.yaml"), build(rng), new UTF8Encoding(false));
         }
     }
+
+    static World BuildWorld(Random rng, int budget) =>
+        new() {
+            Title = Text(rng),
+            Version = rng.Next(1, 100),
+            Catalog = Keyed(rng, rng.Next(1, budget + 1), BuildItem),
+            Units = [.. Enumerable.Range(0, rng.Next(1, budget + 1)).Select(_ => BuildUnit(rng, 0))],
+        };
+
+    static Unit BuildUnit(Random rng, int depth) =>
+        new() {
+            Id = $"{Word(rng)}-{rng.Next(100000)}",
+            Name = Text(rng),
+            Seed = rng.NextInt64(long.MinValue, long.MaxValue),
+            Cost = rng.Next(4) == 0 ? null : Math.Round((decimal)rng.NextDouble() * 10000, 2),
+            Stats = new() {
+                Health = rng.Next(0, 10000),
+                Mana = rng.Next(-100, 1000),
+                Speed = Math.Round(rng.NextDouble() * 20, 3),
+                Flying = rng.Next(2) == 0,
+            },
+            Items = [.. Enumerable.Range(0, rng.Next(0, 3)).Select(_ => BuildItem(rng))],
+            Labels = Keyed(rng, rng.Next(0, 4), r => r.Next(6) == 0 ? null : Text(r)),
+            Minions = depth >= 1
+                ? []
+                : [.. Enumerable.Range(0, rng.Next(0, 3)).Select(_ => BuildUnit(rng, depth + 1))],
+        };
+
+    static Item BuildItem(Random rng) =>
+        new() {
+            Name = Text(rng),
+            Description = rng.Next(3) == 0 ? null : Sentence(rng),
+            Rarity = (Rarity)rng.Next(4),
+            Count = rng.Next(0, 1000),
+            Weight = Math.Round(rng.NextDouble() * 100, 3),
+            Stackable = rng.Next(2) == 0,
+            Level = rng.Next(3) == 0 ? null : rng.Next(1, 100),
+            Tags = [.. Enumerable.Range(0, rng.Next(0, 5)).Select(_ => Text(rng))],
+            Modifiers = Keyed(rng, rng.Next(0, 4), r => r.Next(-50, 50)),
+        };
+
+    static Dictionary<string, T> Keyed<T>(Random rng, int count, Func<Random, T> build) =>
+        Enumerable.Range(0, count).ToDictionary(i => Key(rng, i), _ => build(rng));
+
+    static string Text(Random rng) =>
+        Scalar(rng) as string ?? Word(rng);
 
     public static string Serialize(object? tree) {
         string text = NanoYaml.Serialize(tree);
