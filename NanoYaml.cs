@@ -146,16 +146,58 @@ public static class NanoYaml {
         void Pad(StringBuilder sb, int depth) =>
             sb.Append(' ', depth * settings.IndentSize);
 
-        static bool IsLeaf(object obj) =>
-            obj == null || IsBasicType(obj.GetType());
-
-        void SerializeLeaf(StringBuilder sb, object obj, int indent) {
-            if (obj == null) {
-                sb.Append('~');
-                return;
+        bool TryLeaf(StringBuilder sb, object obj, string prefix, out TypeShape shape) {
+            shape = null!;
+            if (obj is null) {
+                sb.Append(prefix).Append('~');
+                return true;
             }
 
-            SerializeBasic(sb, obj, indent);
+            if (obj is string text) {
+                sb.Append(prefix);
+                WriteText(sb, text);
+                return true;
+            }
+
+            shape = ShapeOf(obj.GetType());
+            if (shape.Basic) {
+                sb.Append(prefix);
+                SerializeBasic(sb, obj, false);
+                return true;
+            }
+
+            if (!IsEmptyCollectionWithZeroFlowLimit(obj, shape, out bool emptyMap)) {
+                return false;
+            }
+
+            sb.Append(prefix);
+            SerializeEmptyCollection(sb, emptyMap);
+            return true;
+        }
+
+        bool TryInline(StringBuilder sb, object obj, string prefix, out TypeShape shape) {
+            if (TryLeaf(sb, obj, prefix, out shape)) {
+                return true;
+            }
+
+            if (!CanFlow(obj, shape)) {
+                return false;
+            }
+
+            sb.Append(prefix);
+            SerializeFlowUnknown(sb, obj);
+            return true;
+        }
+
+        void SerializeBlock(StringBuilder sb, object obj, TypeShape shape, int indent, bool firstLineIndented) {
+            if (shape.Map) {
+                SerializeMap(sb, obj, shape, indent, firstLineIndented);
+            } else if (shape.List) {
+                SerializeList(sb, obj, indent);
+            } else {
+                Dictionary<string, object> dict = ToDictionary(obj);
+                SerializeMap(sb, dict, ShapeOf(dict.GetType()), indent, firstLineIndented);
+            }
         }
 
         /// <summary>Serializes a .NET value as a YAML document.</summary>
@@ -182,86 +224,74 @@ public static class NanoYaml {
             }
         }
 
-        void SerializeUnknown(StringBuilder sb, object obj, int indent = 0, bool firstLineIndented = false) {
-            if (IsLeaf(obj)) {
-                SerializeLeaf(sb, obj, indent);
+        void SerializeUnknown(StringBuilder sb, object obj) {
+            if (!TryInline(sb, obj, "", out TypeShape shape)) {
+                SerializeBlock(sb, obj, shape, 0, false);
+            }
+        }
+
+        static bool Number(string str) {
+            static bool Fraction(string str, int at) {
+                int i = at + 1;
+                if (i < str.Length && char.ToLowerInvariant(str[i]) is 'i' or 'n') {
+                    ReadOnlySpan<char> rest = str.AsSpan(i);
+                    return rest.Equals("inf", StringComparison.OrdinalIgnoreCase) ||
+                           rest.Equals("nan", StringComparison.OrdinalIgnoreCase);
+                }
+
+                int digits = 0;
+                while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
+                    i++;
+                    digits++;
+                }
+
+                return digits > 0 && Exponent(str, i);
+            }
+
+            int at = str[0] is '+' or '-' ? 1 : 0;
+            if (at >= str.Length) {
+                return false;
+            }
+
+            char first = str[at];
+            if (first == '.') {
+                return Fraction(str, at);
+            }
+
+            if (first == '0' && at + 1 < str.Length) {
+                char kind = char.ToLowerInvariant(str[at + 1]);
+                if (kind is 'x' or 'o' or 'b') {
+                    return Digits(str, at + 2, kind);
+                }
+            }
+
+            if (first is < '0' or > '9') {
+                return false;
+            }
+
+            int i = at;
+            while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
+                i++;
+            }
+
+            if (i < str.Length && str[i] == '.') {
+                i++;
+                while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
+                    i++;
+                }
+            }
+
+            return Exponent(str, i);
+        }
+
+        void SerializeBasic(StringBuilder sb, object obj, bool asKey) {
+            if (obj is string plain) {
+                WriteText(sb, plain);
                 return;
             }
 
             Type type = obj.GetType();
-
-            if (IsEmptyCollectionWithZeroFlowLimit(obj, out bool emptyMap)) {
-                SerializeEmptyCollection(sb, emptyMap);
-            } else if (CanFlow(obj)) {
-                SerializeFlowUnknown(sb, obj);
-            } else if (IsMap(type)) {
-                SerializeMap(sb, obj, indent, firstLineIndented);
-            } else if (IsList(type)) {
-                SerializeList(sb, obj, indent);
-            } else {
-                var dict = ToDictionary(obj);
-                SerializeMap(sb, dict, indent, firstLineIndented);
-            }
-        }
-
-        void SerializeBasic(StringBuilder sb, object obj, int indent = 0, bool asKey = false) {
-            static bool Number(string str) {
-                static bool Fraction(string str, int at) {
-                    int i = at + 1;
-                    if (i < str.Length && char.ToLowerInvariant(str[i]) is 'i' or 'n') {
-                        ReadOnlySpan<char> rest = str.AsSpan(i);
-                        return rest.Equals("inf", StringComparison.OrdinalIgnoreCase) ||
-                               rest.Equals("nan", StringComparison.OrdinalIgnoreCase);
-                    }
-
-                    int digits = 0;
-                    while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
-                        i++;
-                        digits++;
-                    }
-
-                    return digits > 0 && Exponent(str, i);
-                }
-
-                int at = str[0] is '+' or '-' ? 1 : 0;
-                if (at >= str.Length) {
-                    return false;
-                }
-
-                char first = str[at];
-                if (first == '.') {
-                    return Fraction(str, at);
-                }
-
-                if (first == '0' && at + 1 < str.Length) {
-                    char kind = char.ToLowerInvariant(str[at + 1]);
-                    if (kind is 'x' or 'o' or 'b') {
-                        return Digits(str, at + 2, kind);
-                    }
-                }
-
-                if (first is < '0' or > '9') {
-                    return false;
-                }
-
-                int i = at;
-                while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
-                    i++;
-                }
-
-                if (i < str.Length && str[i] == '.') {
-                    i++;
-                    while (i < str.Length && (str[i] is >= '0' and <= '9' || str[i] == '_')) {
-                        i++;
-                    }
-                }
-
-                return Exponent(str, i);
-            }
-
-            Pad(sb, indent);
-            Type type = obj.GetType();
-            bool asText = obj is string or char || type.IsEnum || (asKey && !IsBasicType(type));
+            bool asText = obj is char || type.IsEnum || (asKey && !IsBasicType(type));
             if (!asText) {
                 string special = "";
                 if (obj is (double or float)) {
@@ -282,29 +312,36 @@ public static class NanoYaml {
                 return;
             }
 
-            string str = obj.ToString()!;
+            WriteText(sb, obj.ToString()!);
+        }
 
+        static bool Special(ReadOnlySpan<char> chars) =>
+            chars.ContainsAny(specialCharacters) ||
+            chars.ContainsAnyInRange('\0', '\u001F') ||
+            chars.ContainsAnyInRange('\u007F', '\u009F') ||
+            chars.ContainsAnyInRange('\uD800', '\uDFFF') ||
+            chars.ContainsAny(escapeCharacters);
+
+        static void WriteText(StringBuilder sb, string str) {
             ReadOnlySpan<char> chars = str.AsSpan();
+            int odd = chars.IndexOfAnyExcept(plainAscii);
+            bool ascii = odd < 0 || (chars[odd] < '\u0080' && Ascii.IsValid(chars[odd..]));
+            bool special = odd >= 0 && (chars[odd] < '\u0080' || Special(chars[odd..]));
 
             bool needsQuote =
                 str.Length == 0 ||
-                str.StartsWith(' ') || str.EndsWith(' ') || str.StartsWith('\t') ||
-                str.EndsWith('\t') ||
+                special ||
+                str[0] is ' ' || str[^1] is ' ' ||
                 leadingIndicators.Contains(str[0]) ||
                 IsDocumentMarker(str) ||
-                typedWords.Contains(str) ||
-                chars.ContainsAny(specialCharacters) ||
-                chars.ContainsAnyInRange('\0', '\u001F') ||
-                chars.ContainsAnyInRange('\u007F', '\u009F') ||
-                chars.ContainsAnyInRange('\uD800', '\uDFFF') ||
-                chars.ContainsAny(escapeCharacters) ||
+                IsTypedWord(str) ||
                 Number(str);
 
             if (needsQuote) {
                 sb.Append('"');
-                ReadOnlySpan<char> remaining = str.AsSpan();
+                ReadOnlySpan<char> remaining = chars;
                 while (!remaining.IsEmpty) {
-                    int next = NextEscape(remaining);
+                    int next = ascii ? remaining.IndexOfAny(asciiEscapeCharacters) : NextEscape(remaining);
                     if (next < 0) {
                         sb.Append(remaining);
                         break;
@@ -397,216 +434,196 @@ public static class NanoYaml {
             return digits > 0 && i == str.Length;
         }
 
-        void SerializeMap(StringBuilder sb, object obj, int indent = 0, bool firstLineIndented = false) {
-            if (ShapeOf(obj.GetType()).WriteGenericMap is { } writer) {
+        void WriteKey(StringBuilder sb, object key) {
+            if (key is string text) {
+                WriteText(sb, text);
+            } else {
+                SerializeBasic(sb, key, true);
+            }
+        }
+
+        void BlockEntry(StringBuilder sb, object? key, object val, int indent, bool firstLineIndented, ref bool firstLine) {
+            if (key == null) {
+                return;
+            }
+
+            if (!firstLine) {
+                sb.AppendLine();
+            }
+
+            if (!firstLine || !firstLineIndented) {
+                Pad(sb, indent);
+            }
+
+            firstLine = false;
+            WriteKey(sb, key);
+            sb.Append(':');
+            if (!TryInline(sb, val, " ", out TypeShape shape)) {
+                sb.AppendLine();
+                SerializeBlock(sb, val, shape, indent + 1, false);
+            }
+        }
+
+        void FlowEntry(StringBuilder sb, object? key, object val, ref bool first) {
+            if (key == null) {
+                return;
+            }
+
+            if (!first) {
+                sb.Append(", ");
+            }
+
+            first = false;
+            WriteKey(sb, key);
+            sb.Append(": ");
+            SerializeFlowUnknown(sb, val);
+        }
+
+        void ListItem(StringBuilder sb, object v, int indent, ref bool first) {
+            if (!first) {
+                sb.AppendLine();
+            }
+
+            first = false;
+            Pad(sb, indent);
+            if (TryInline(sb, v, "- ", out TypeShape shape)) {
+                return;
+            }
+
+            if (!shape.Map && shape.List) {
+                sb.Append('-').AppendLine();
+                SerializeList(sb, v, indent + 1);
+            } else {
+                sb.Append("- ");
+                SerializeBlock(sb, v, shape, indent + 1, true);
+            }
+        }
+
+        void FlowItem(StringBuilder sb, object v, ref bool first) {
+            if (!first) {
+                sb.Append(", ");
+            }
+
+            first = false;
+            SerializeFlowUnknown(sb, v);
+        }
+
+        void SerializeMap(StringBuilder sb, object obj, TypeShape shape, int indent, bool firstLineIndented) {
+            if (shape.WriteGenericMap is { } writer) {
                 writer(this, sb, obj, indent, firstLineIndented, false);
                 return;
             }
 
             bool firstLine = true;
-            IDictionary dict = (IDictionary)obj;
-            foreach (DictionaryEntry entry in dict) {
-                object key = entry.Key;
-                if (key == null) {
-                    continue;
-                }
-
-                if (!firstLine) {
-                    sb.AppendLine();
-                }
-
-                if (!firstLine || !firstLineIndented) {
-                    Pad(sb, indent);
-                }
-
-                firstLine = false;
-
-                SerializeBasic(sb, key, 0, true);
-                sb.Append(':');
-
-                object val = entry.Value;
-                if (IsLeaf(val)) {
-                    sb.Append(' ');
-                    SerializeLeaf(sb, val, 0);
-                } else if (IsEmptyCollectionWithZeroFlowLimit(val, out bool emptyMap)) {
-                    sb.Append(' ');
-                    SerializeEmptyCollection(sb, emptyMap);
-                } else if (CanFlow(val)) {
-                    sb.Append(' ');
-                    SerializeFlowUnknown(sb, val);
-                } else {
-                    sb.AppendLine();
-                    SerializeUnknown(sb, val, indent + 1, false);
-                }
+            foreach (DictionaryEntry entry in (IDictionary)obj) {
+                BlockEntry(sb, entry.Key, entry.Value, indent, firstLineIndented, ref firstLine);
             }
         }
 
         void SerializeMap<TKey, TValue>(StringBuilder sb, object obj, int indent, bool firstLineIndented) {
             bool firstLine = true;
-            IDictionary<TKey, TValue> dict = (IDictionary<TKey, TValue>)obj;
-            foreach (KeyValuePair<TKey, TValue> entry in dict) {
-                object? key = entry.Key;
-                if (key == null) {
-                    continue;
+            if (obj is Dictionary<TKey, TValue> dict) {
+                foreach (KeyValuePair<TKey, TValue> entry in dict) {
+                    BlockEntry(sb, entry.Key, entry.Value!, indent, firstLineIndented, ref firstLine);
                 }
 
-                if (!firstLine) {
-                    sb.AppendLine();
-                }
+                return;
+            }
 
-                if (!firstLine || !firstLineIndented) {
-                    Pad(sb, indent);
-                }
-
-                firstLine = false;
-
-                SerializeBasic(sb, key, 0, true);
-                sb.Append(':');
-
-                object val = entry.Value!;
-                if (IsLeaf(val)) {
-                    sb.Append(' ');
-                    SerializeLeaf(sb, val, 0);
-                } else if (IsEmptyCollectionWithZeroFlowLimit(val, out bool emptyMap)) {
-                    sb.Append(' ');
-                    SerializeEmptyCollection(sb, emptyMap);
-                } else if (CanFlow(val)) {
-                    sb.Append(' ');
-                    SerializeFlowUnknown(sb, val);
-                } else {
-                    sb.AppendLine();
-                    SerializeUnknown(sb, val, indent + 1, false);
-                }
+            foreach (KeyValuePair<TKey, TValue> entry in (IDictionary<TKey, TValue>)obj) {
+                BlockEntry(sb, entry.Key, entry.Value!, indent, firstLineIndented, ref firstLine);
             }
         }
 
-        void SerializeList(StringBuilder sb, object obj, int indent = 0) {
+        void SerializeList(StringBuilder sb, object obj, int indent) {
             bool first = true;
-            foreach (object v in (IEnumerable)obj) {
-                if (!first) {
-                    sb.AppendLine();
+            if (obj is List<object> list) {
+                foreach (object v in list) {
+                    ListItem(sb, v, indent, ref first);
                 }
 
-                first = false;
-                Pad(sb, indent);
-                if (IsLeaf(v)) {
-                    sb.Append("- ");
-                    SerializeLeaf(sb, v, 0);
-                } else if (IsEmptyCollectionWithZeroFlowLimit(v, out bool emptyMap)) {
-                    sb.Append("- ");
-                    SerializeEmptyCollection(sb, emptyMap);
-                } else if (CanFlow(v)) {
-                    sb.Append("- ");
-                    SerializeFlowUnknown(sb, v);
-                } else if (!IsMap(v.GetType()) && IsList(v.GetType())) {
-                    sb.Append('-');
-                    sb.AppendLine();
-                    SerializeList(sb, v, indent + 1);
-                } else {
-                    sb.Append("- ");
-                    SerializeUnknown(sb, v, indent + 1, true);
-                }
+                return;
+            }
+
+            foreach (object v in (IEnumerable)obj) {
+                ListItem(sb, v, indent, ref first);
             }
         }
 
         void SerializeFlowUnknown(StringBuilder sb, object obj) {
-            if (IsLeaf(obj)) {
-                SerializeLeaf(sb, obj, 0);
+            if (TryLeaf(sb, obj, "", out TypeShape shape)) {
                 return;
             }
 
-            if (IsEmptyCollectionWithZeroFlowLimit(obj, out bool emptyMap)) {
-                SerializeEmptyCollection(sb, emptyMap);
-                return;
-            }
-
-            Type type = obj.GetType();
-            if (IsMap(type)) {
-                SerializeFlowMap(sb, obj);
-            } else if (IsList(type)) {
-                bool first = true;
-                sb.Append('[');
-                foreach (object v in (IEnumerable)obj) {
-                    if (!first) {
-                        sb.Append(", ");
-                    }
-
-                    first = false;
-                    SerializeFlowUnknown(sb, v);
-                }
-
-                sb.Append(']');
+            if (shape.Map) {
+                SerializeFlowMap(sb, obj, shape);
+            } else if (shape.List) {
+                SerializeFlowList(sb, obj);
             } else {
-                SerializeFlowMap(sb, ToDictionary(obj));
+                Dictionary<string, object> dict = ToDictionary(obj);
+                SerializeFlowMap(sb, dict, ShapeOf(dict.GetType()));
             }
         }
 
-        bool IsEmptyCollectionWithZeroFlowLimit(object obj, out bool isMap) {
-            isMap = false;
-            if ((settings.AutoFlowMapCount != 0 && settings.AutoFlowListCount != 0)
-                || obj is not ICollection { Count: 0 }) {
-                return false;
-            }
-
-            Type type = obj.GetType();
-            isMap = IsMap(type);
-            return (isMap || IsList(type)) &&
-                   (isMap ? settings.AutoFlowMapCount : settings.AutoFlowListCount) == 0;
-        }
-
-        static void SerializeEmptyCollection(StringBuilder sb, bool isMap) =>
-            sb.Append(isMap ? "{}" : "[]");
-
-        void SerializeFlowMap(StringBuilder sb, object obj) {
-            if (ShapeOf(obj.GetType()).WriteGenericMap is { } writer) {
-                writer(this, sb, obj, 0, false, true);
-                return;
-            }
-
-            IDictionary dict = (IDictionary)obj;
+        void SerializeFlowList(StringBuilder sb, object obj) {
             bool first = true;
+            sb.Append('[');
+            if (obj is List<object> list) {
+                foreach (object v in list) {
+                    FlowItem(sb, v, ref first);
+                }
+            } else {
+                foreach (object v in (IEnumerable)obj) {
+                    FlowItem(sb, v, ref first);
+                }
+            }
+
+            sb.Append(']');
+        }
+
+        void SerializeFlowMap(StringBuilder sb, object obj, TypeShape shape) {
             sb.Append('{');
-            foreach (DictionaryEntry entry in dict) {
-                object key = entry.Key;
-                if (key == null) {
-                    continue;
+            if (shape.WriteGenericMap is { } writer) {
+                writer(this, sb, obj, 0, false, true);
+            } else {
+                bool first = true;
+                foreach (DictionaryEntry entry in (IDictionary)obj) {
+                    FlowEntry(sb, entry.Key, entry.Value!, ref first);
                 }
-
-                if (!first) {
-                    sb.Append(", ");
-                }
-
-                first = false;
-                SerializeBasic(sb, key, 0, true);
-                sb.Append(": ");
-                SerializeFlowUnknown(sb, entry.Value!);
             }
 
             sb.Append('}');
         }
 
         void SerializeFlowMap<TKey, TValue>(StringBuilder sb, object obj) {
-            IDictionary<TKey, TValue> dict = (IDictionary<TKey, TValue>)obj;
             bool first = true;
-            sb.Append('{');
-            foreach (KeyValuePair<TKey, TValue> entry in dict) {
-                object? key = entry.Key;
-                if (key == null) {
-                    continue;
+            if (obj is Dictionary<TKey, TValue> dict) {
+                foreach (KeyValuePair<TKey, TValue> entry in dict) {
+                    FlowEntry(sb, entry.Key, entry.Value!, ref first);
                 }
 
-                if (!first) {
-                    sb.Append(", ");
-                }
-
-                first = false;
-                SerializeBasic(sb, key, 0, true);
-                sb.Append(": ");
-                SerializeFlowUnknown(sb, entry.Value!);
+                return;
             }
 
-            sb.Append('}');
+            foreach (KeyValuePair<TKey, TValue> entry in (IDictionary<TKey, TValue>)obj) {
+                FlowEntry(sb, entry.Key, entry.Value!, ref first);
+            }
         }
+
+        bool IsEmptyCollectionWithZeroFlowLimit(object obj, TypeShape shape, out bool isMap) {
+            isMap = false;
+            if ((settings.AutoFlowMapCount != 0 && settings.AutoFlowListCount != 0)
+                || obj is not ICollection { Count: 0 }) {
+                return false;
+            }
+
+            isMap = shape.Map;
+            return (isMap || shape.List) &&
+                   (isMap ? settings.AutoFlowMapCount : settings.AutoFlowListCount) == 0;
+        }
+
+        static void SerializeEmptyCollection(StringBuilder sb, bool isMap) =>
+            sb.Append(isMap ? "{}" : "[]");
 
         static void WriteGenericMap<TKey, TValue>(
             Serializer serializer,
@@ -622,49 +639,44 @@ public static class NanoYaml {
             }
         }
 
-        bool IsCollection(object node, out bool isMap) {
+        static bool IsCollection(object node, out bool isMap) {
             isMap = false;
-            if (node == null) {
+            if (node is null or string) {
                 return false;
             }
 
-            Type type = node.GetType();
-            if (IsBasicType(type)) {
-                return false;
-            }
-
-            if (IsMap(type)) {
-                isMap = true;
-                return true;
-            }
-
-            if (IsList(type)) {
-                return true;
-            }
-
-            isMap = true;
-            return true;
+            TypeShape shape = ShapeOf(node.GetType());
+            isMap = shape.Map || !shape.List;
+            return !shape.Basic;
         }
 
-        bool CanFlow(object node) {
-            if (!IsCollection(node, out bool isMap)) {
-                return false;
-            }
-
+        bool CanFlow(object node, TypeShape shape) {
+            bool isMap = shape.Map || !shape.List;
             uint limit = isMap ? settings.AutoFlowMapCount : settings.AutoFlowListCount;
             return limit >= AlwaysFlow ||
                    CountChildren(node, isMap, limit) <= limit &&
-                   ChildValues(node, isMap).All(child => !IsCollection(child, out _) || CanFlow(child));
+                   ChildValues(node, isMap).All(child => !IsCollection(child, out _) || CanFlow(child, ShapeOf(child.GetType())));
         }
 
         ulong CountChildren(object node, bool isMap, uint cap) {
+            int KeyCount(IDictionary dict) {
+                int count = 0;
+                foreach (object key in dict.Keys) {
+                    if (key != null && ++count > cap) {
+                        break;
+                    }
+                }
+
+                return count;
+            }
+
             int ChildCount() =>
                 !isMap
                     ? node is ICollection collection
                         ? collection.Count
                         : ((IEnumerable)node).Cast<object>().Count()
                     : node is IDictionary dict
-                        ? dict.Keys.Cast<object>().Count(key => key != null)
+                        ? KeyCount(dict)
                         : ToDictionary(node).Count;
 
             ulong total = (ulong)ChildCount();
@@ -708,6 +720,15 @@ public static class NanoYaml {
         static readonly SearchValues<char> leadingIndicators = SearchValues.Create("-?&*!%|>@`");
         static readonly SearchValues<char> specialCharacters = SearchValues.Create(":\"\'\n[]{}#,\\\r\t\0\a\b\v\f\e\x85\xa0\u2028\u2029");
         static readonly SearchValues<char> escapeCharacters = SearchValues.Create("\\\"\u00A0\u2028\u2029\uFEFF\uFFFE\uFFFF");
+        static readonly string asciiControls = $"{new string([.. Enumerable.Range(0, 32).Select(c => (char)c)])}\u007F";
+        static readonly SearchValues<char> //
+            plainAscii = SearchValues.Create(new string([.. Enumerable.Range(' ', '\u007F' - ' ').Select(c => (char)c).Where(c => !":\"\'[]{}#,\\".Contains(c))])),
+            asciiEscapeCharacters = SearchValues.Create($"\\\"{asciiControls}");
+        static bool IsTypedWord(string str) =>
+            str.Length <= MaxTypedWordLength && str.Length > 0 && (str[0] | 0x20) is '~' or 'y' or 'n' or 'o' or 't' or 'f' &&
+            typedWords.Contains(str);
+
+        const int MaxTypedWordLength = 5;
 
         static readonly Dictionary<char, string> escapes = new() {
             ['\\'] = "\\",
@@ -838,7 +859,15 @@ public static class NanoYaml {
         NanoYamlException NoConcrete(Type type) =>
             Fail($"Cannot create concrete type for interface/abstract type: {type}");
 
-        readonly record struct Line(int Offset, int Length);
+        readonly record struct Line(
+            int Offset,
+            int Length,
+            int Start,
+            int End,
+            int Indent,
+            int Colon,
+            bool Blank,
+            bool TabIndent);
 
         class Lines {
             public string Text = "";
@@ -848,6 +877,71 @@ public static class NanoYaml {
                 Line item = Items[index];
                 return Text.AsSpan(item.Offset, item.Length);
             }
+
+            public ReadOnlySpan<char> Content(in Line item) =>
+                Text.AsSpan(item.Start, item.End - item.Start);
+        }
+
+        static readonly SearchValues<char> lineMarks = SearchValues.Create("'\"#:");
+
+        static (int Clean, int Colon) ScanLine(ReadOnlySpan<char> line) {
+            int colon = -1;
+            int at = 0;
+            while (true) {
+                int next = line[at..].IndexOfAny(lineMarks);
+                if (next < 0) {
+                    return (line.Length, colon);
+                }
+
+                at += next;
+                char c = line[at];
+                if (c == '#') {
+                    if (at == 0 || char.IsWhiteSpace(line[at - 1])) {
+                        return (line[..at].TrimEnd().Length, colon);
+                    }
+
+                    at++;
+                } else if (c == ':') {
+                    if (colon < 0 && (at + 1 == line.Length || char.IsWhiteSpace(line[at + 1]))) {
+                        colon = at;
+                    }
+
+                    at++;
+                } else {
+                    at = SkipQuoted(line, at + 1, c);
+                }
+            }
+        }
+
+        static int SkipQuoted(ReadOnlySpan<char> line, int at, char quote) {
+            while (true) {
+                int next = line[at..].IndexOfAny(quote, '\\');
+                if (next < 0) {
+                    return line.Length;
+                }
+
+                at += next;
+                if (line[at] == quote) {
+                    return at + 1;
+                }
+
+                at = Math.Min(at + 2, line.Length);
+            }
+        }
+
+        static Line Describe(ReadOnlySpan<char> text, int offset, int length) {
+            ReadOnlySpan<char> raw = text.Slice(offset, length);
+            (int clean, int colon) = ScanLine(raw);
+            int indent = IndentOf(raw[..clean]);
+            return new(
+                offset,
+                length,
+                offset + indent,
+                offset + clean,
+                indent,
+                colon < 0 ? -1 : offset + colon,
+                raw[..clean][indent..].IsWhiteSpace(),
+                indent < length && raw[indent] == '\t');
         }
 
         struct QuoteWalker {
@@ -900,7 +994,7 @@ public static class NanoYaml {
 
         int IndexOfContent(Lines lines, int from, int to) {
             for (int i = from; i < to; i++) {
-                if (!CleanLine(lines.Raw(i)).IsWhiteSpace()) {
+                if (!lines.Items[i].Blank) {
                     return i;
                 }
             }
@@ -987,16 +1081,20 @@ public static class NanoYaml {
 
             Lines Split(string yaml) {
                 string text = (HasBom(yaml) ? yaml[1..] : yaml).Replace("\r\n", "\n").Replace('\r', '\n');
-                Lines lines = new() { Text = text };
+                ReadOnlySpan<char> span = text.AsSpan();
+                Lines lines = new() { Text = text, Items = new(span.Count('\n') + 1) };
                 int start = 0;
-                for (int i = 0; i < text.Length; i++) {
-                    if (text[i] == '\n') {
-                        lines.Items.Add(new Line(start, i - start));
-                        start = i + 1;
+                while (true) {
+                    int end = span[start..].IndexOf('\n');
+                    if (end < 0) {
+                        break;
                     }
+
+                    lines.Items.Add(Describe(span, start, end));
+                    start += end + 1;
                 }
 
-                lines.Items.Add(new Line(start, text.Length - start));
+                lines.Items.Add(Describe(span, start, text.Length - start));
                 if (lines.Items[^1].Length == 0 && yaml.EndsWith('\n')) {
                     lines.Items.RemoveAt(lines.Items.Count - 1);
                 }
@@ -1591,7 +1689,10 @@ public static class NanoYaml {
             : value is List<object> ? "a list"
             : $"'{value}'";
 
-        string ResolveScalar(string str) {
+        string ResolveScalar(string str) =>
+            ResolveScalar(str.AsSpan(), str);
+
+        string ResolveScalar(ReadOnlySpan<char> str, string? owned) {
             string Unescape(ReadOnlySpan<char> text) {
                 int firstEscape = text.IndexOf('\\');
                 if (firstEscape < 0) {
@@ -1632,19 +1733,29 @@ public static class NanoYaml {
                 return sb.ToString();
             }
 
-            return str.Length >= 2 && str.StartsWith('"')
-                ? str.EndsWith('"')
-                    ? Unescape(str.AsSpan(1, str.Length - 2))
+            string SingleQuoted(ReadOnlySpan<char> text) =>
+                text.Contains("''", StringComparison.Ordinal)
+                    ? text.ToString().Replace("''", "'")
+                    : text.ToString();
+
+            return str.Length >= 2 && str[0] == '"'
+                ? str[^1] == '"'
+                    ? Unescape(str[1..^1])
                     : throw Fail($"Unterminated quote: '{str}'")
-                : str.Length >= 2 && str.StartsWith('\'')
-                    ? str.EndsWith('\'')
-                        ? str[1..^1].Replace("''", "'")
+                : str.Length >= 2 && str[0] == '\''
+                    ? str[^1] == '\''
+                        ? SingleQuoted(str[1..^1])
                         : throw Fail($"Unterminated quote: '{str}'")
-                    : str;
+                    : owned ?? str.ToString();
         }
 
         string ResolveKey(string text) =>
             ResolveScalar(CheckScalar(text));
+
+        string ResolveKey(ReadOnlySpan<char> text) {
+            CheckScalar(text);
+            return ResolveScalar(text, null);
+        }
 
         Type GetConcreteListType(Type type, Type valueType) {
             if (!type.IsInterface && !type.IsAbstract) {
@@ -1689,18 +1800,30 @@ public static class NanoYaml {
                 : throw NoConcrete(type);
         }
 
+        (object Value, int Taken) ContinuedValue(Lines lines, int i, int to, ReadOnlySpan<char> text, int here) {
+            int j = i + 1;
+            if (j < to) {
+                Line next = lines.Items[j];
+                if (!next.Blank && next.Indent > here && next.Colon < 0 && !lines.Content(next).StartsWith("- ")) {
+                    (string joined, int taken) = WithContinued(lines, i, to, text, here);
+                    return (ResolveValue(joined), taken);
+                }
+            }
+
+            return (ResolveValue(text, null), 0);
+        }
+
         (string Text, int Taken) WithContinued(Lines lines, int i, int to, ReadOnlySpan<char> text, int here) {
             StringBuilder? joined = null;
             int taken = 0;
             for (int j = i + 1; j < to; j++) {
-                ReadOnlySpan<char> next = CleanLine(lines.Raw(j));
-                if (next.IsWhiteSpace()) {
+                Line next = lines.Items[j];
+                if (next.Blank || next.Indent <= here || next.Colon >= 0) {
                     break;
                 }
 
-                int deep = IndentOf(next);
-                ReadOnlySpan<char> stripped = next[deep..];
-                if (deep <= here || HasKeyColon(next) || stripped.StartsWith("- ")) {
+                ReadOnlySpan<char> stripped = lines.Content(next);
+                if (stripped.StartsWith("- ")) {
                     break;
                 }
 
@@ -1720,7 +1843,7 @@ public static class NanoYaml {
                 : throw Fail($"Bad %YAML directive: '{text.Trim()}'");
         }
 
-        string? RejectedName(string text) =>
+        string? RejectedName(ReadOnlySpan<char> text) =>
             text.Length == 0
                 ? null
                 : text[0] switch {
@@ -1730,26 +1853,33 @@ public static class NanoYaml {
                     _ => null,
                 };
 
-        string CheckScalar(string text) =>
-            text.Length < 2 || text[0] is '"' or '\''
-                ? text
-                : RejectedName(text) is { } reason
-                    ? throw Fail($"{reason} '{text}'")
-                    : text;
+        string CheckScalar(string text) {
+            CheckScalar(text.AsSpan());
+            return text;
+        }
 
-        object ResolveValue(string text) {
+        void CheckScalar(ReadOnlySpan<char> text) {
+            if (text.Length >= 2 && text[0] is not ('"' or '\'') && RejectedName(text) is { } reason) {
+                throw Fail($"{reason} '{text}'");
+            }
+        }
+
+        object ResolveValue(string text) =>
+            ResolveValue(text.AsSpan(), text);
+
+        object ResolveValue(ReadOnlySpan<char> text, string? owned) {
             if (text.Length >= 2 && (text[0] == '"' || text[0] == '\'')) {
-                return ResolveScalar(text);
+                return ResolveScalar(text, owned);
             }
 
-            string scalar = CheckScalar(text);
-            return nullForms.Contains(scalar) ||
-                   (mode == ParsingMode.Compatible && compatibleNullForms.Contains(scalar))
+            CheckScalar(text);
+            bool compatible = mode == ParsingMode.Compatible;
+            return text is "null" or "~" || (compatible && text is "Null" or "NULL")
                 ? null!
-                : mode != ParsingMode.Compatible && scalar.Length == 4 &&
-                  (scalar[0] is 'n' or 'N') && scalar.Equals("null", StringComparison.OrdinalIgnoreCase)
-                    ? throw Fail($"non-lowercase null literal '{scalar}'")
-                    : scalar;
+                : !compatible && text.Length == 4 &&
+                  (text[0] is 'n' or 'N') && text.Equals("null", StringComparison.OrdinalIgnoreCase)
+                    ? throw Fail($"non-lowercase null literal '{text}'")
+                    : owned ?? text.ToString();
         }
 
         void AddEntry(Dictionary<object, object> resultDict, object key, object val) {
@@ -1985,77 +2115,84 @@ public static class NanoYaml {
         static bool IsDocumentEnd(ReadOnlySpan<char> text) =>
             text.Trim().SequenceEqual("...".AsSpan());
 
-        (object, int processedCount) PreProcess(Lines lines, int from, int to, int depth, string? first, bool flatSequence = false) {
+        (object, int processedCount) PreProcess(Lines lines, int from, int to, int depth, Line? first, bool flatSequence = false) {
             if (depth > settings.MaxDepth) {
                 throw Fail($"Nesting past {settings.MaxDepth} deep");
             }
 
             int need = depth * settings.IndentSize;
+            bool compatible = mode == ParsingMode.Compatible;
 
             Dictionary<object, object>? resultDict = null;
             List<object>? resultList = null;
 
             for (int i = from; i < to; i++) {
-                ReadOnlySpan<char> raw = i == from && first is not null ? first.AsSpan() : lines.Raw(i);
-                ReadOnlySpan<char> text = CleanLine(raw);
-                if (text.IsWhiteSpace()) {
+                Line entry = i == from && first is { } head ? head : lines.Items[i];
+                if (entry.Blank) {
                     continue;
                 }
 
                 line = i + 1;
-                if (mode == ParsingMode.Compatible) {
-                    BanIndentTab(raw);
+                if (compatible && entry.TabIndent) {
+                    throw Fail("Tabs are banned in indentation");
                 }
 
-                int here = IndentOf(text);
+                int here = entry.Indent;
                 if (here < need) {
                     return Finish(i - from);
                 }
 
-                if (mode == ParsingMode.Compatible && IsDocumentEnd(text)) {
+                ReadOnlySpan<char> text = lines.Content(entry);
+                if (compatible && IsDocumentEnd(text)) {
                     continue;
                 }
 
-                if (IsBareDash(text, need)) {
-                    (object res, int processedCount) =
-                        PreProcess(lines, i + 1, to, depth + 1, null);
-                    if (IsEmpty(res)) {
-                        throw Fail("List item has no value");
-                    }
+                if (here == need && text[0] == '-') {
+                    if (text.Length == 1 || text[1..].IsWhiteSpace()) {
+                        (object res, int processedCount) =
+                            PreProcess(lines, i + 1, to, depth + 1, null);
+                        if (IsEmpty(res)) {
+                            throw Fail("List item has no value");
+                        }
 
-                    (resultList ??= []).Add(res);
-                    i += processedCount;
-                    continue;
-                }
-
-                if (text.Length >= need + 2 && IndentOf(text) >= need && text[need] == '-' && text[need + 1] == ' ') {
-                    ReadOnlySpan<char> item = text[(need + 2)..].Trim();
-                    if (item[0] == '[' || item[0] == '{') {
-                        (resultList ??= []).Add(ParseFlowWhole(item.ToString(), depth + 1));
+                        (resultList ??= []).Add(res);
+                        i += processedCount;
                         continue;
                     }
 
-                    if (HasKeyColon(item)) {
-                        string reindented = new string(' ', need + settings.IndentSize) + item.ToString();
-                        (object res, int processedCount) =
-                            PreProcess(lines, i, to, depth + 1, reindented);
-                        (resultList ??= []).Add(res);
-                        i += processedCount - 1;
-                    } else {
-                        (string joined, int taken) = WithContinued(lines, i, to, item, here);
-                        (resultList ??= []).Add(ResolveValue(joined));
-                        i += taken;
+                    if (text[1] == ' ') {
+                        int lead = text.Length - text[2..].TrimStart().Length;
+                        ReadOnlySpan<char> item = text[lead..].TrimEnd();
+                        if (item[0] == '[' || item[0] == '{') {
+                            (resultList ??= []).Add(ParseFlowWhole(item.ToString(), depth + 1));
+                            continue;
+                        }
+
+                        if (entry.Colon >= 0) {
+                            Line nested = entry with {
+                                Start = entry.Start + lead,
+                                Indent = need + settings.IndentSize,
+                            };
+                            (object res, int processedCount) =
+                                PreProcess(lines, i, to, depth + 1, nested);
+                            (resultList ??= []).Add(res);
+                            i += processedCount - 1;
+                        } else {
+                            (object value, int taken) = ContinuedValue(lines, i, to, item, here);
+                            (resultList ??= []).Add(value);
+                            i += taken;
+                        }
+
+                        continue;
                     }
-                    continue;
                 }
 
                 if (flatSequence) {
                     return (resultList ??= [], i - from);
                 }
 
-                int at = KeyColon(text);
-                if (at < 0) {
-                    string stripped = text[here..].ToString();
+                if (entry.Colon < 0) {
+                    string stripped = text.ToString();
                     if (IsDocumentMarker(stripped) || stripped.StartsWith('%') || stripped == "?" ||
                          stripped.StartsWith("? ")) {
                         throw Fail($"{RejectedName(stripped)!} '{text.Trim()}'");
@@ -2064,7 +2201,8 @@ public static class NanoYaml {
                     throw Fail($"Line has no colon: '{text.Trim()}'");
                 }
 
-                string key = ResolveScalar(text[..at].Trim().ToString());
+                int at = entry.Colon - entry.Start;
+                string key = ResolveScalar(text[..at].Trim(), null);
                 ReadOnlySpan<char> rest = text[(at + 1)..].Trim();
                 if (rest.Length == 0) {
                     (object res, int processedCount) =
@@ -2122,8 +2260,8 @@ public static class NanoYaml {
                             AddEntry(resultDict ??= [], key, ParseFlowWhole(rest.ToString(), depth + 1));
                             break;
                         default: {
-                                (string joined, int taken) = WithContinued(lines, i, to, rest, here);
-                                AddEntry(resultDict ??= [], key, ResolveValue(joined));
+                                (object value, int taken) = ContinuedValue(lines, i, to, rest, here);
+                                AddEntry(resultDict ??= [], key, value);
                                 i += taken;
                                 break;
                             }
@@ -2132,15 +2270,6 @@ public static class NanoYaml {
             }
 
             return Finish(to - from);
-
-            static bool IsBareDash(ReadOnlySpan<char> line, int need) {
-                int end = line.Length;
-                while (end > 0 && char.IsWhiteSpace(line[end - 1])) {
-                    end--;
-                }
-
-                return end == need + 1 && line[need] == '-' && IndentOf(line) >= need;
-            }
 
             (char Style, char Chomp)? BlockHeader(string rest) {
                 if (rest.Length == 0 || (rest[0] != '|' && rest[0] != '>')) {
