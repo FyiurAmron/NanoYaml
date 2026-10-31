@@ -1006,6 +1006,55 @@ public class NanoYamlCommonTests {
         Modes.CommonFails<WithUnmarkedPrivate>("secret: hi\nName: yo\n");
     }
 
+    [Fact]
+    public void GenericSetsRoundTrip() {
+        var hashed = Modes.Common<HashSet<string>>("- a\n- b\n");
+        Assert.True(hashed.SetEquals(["a", "b"]));
+        Assert.Contains("- a", NanoYaml.Serialize(hashed));
+        var sorted = Modes.Common<SortedSet<string>>("- b\n- a\n");
+        Assert.True(sorted.SetEquals(["a", "b"]));
+        Assert.Contains("- a", NanoYaml.Serialize(sorted));
+    }
+
+    [Fact]
+    public void ReadOnlyCollectionTargetsFill() {
+        var setted = Modes.Common<ISet<int>>("- 1\n- 2\n");
+        Assert.IsType<HashSet<int>>(setted);
+        Assert.True(setted.SetEquals([1, 2]));
+        var listed = Modes.Common<IReadOnlyList<int>>("- 1\n- 2\n");
+        Assert.IsType<List<int>>(listed);
+        Assert.Equal([1, 2], listed);
+    }
+
+    [Fact]
+    public void CustomCollectionRoundTrips() {
+        var back = Modes.Common<StringBag>("- a\n- b\n");
+        Assert.True(back.SequenceEqual(["a", "b"]));
+        string yaml = NanoYaml.Serialize(back);
+        Assert.Contains("- a", yaml);
+        Assert.Contains("- b", yaml);
+    }
+
+    [Fact]
+    public void CustomMapRoundTrips() {
+        var back = Modes.Common<StringMap>("a:\n  - 1\n  - 2\n");
+        Assert.Equal([1, 2], back["a"]);
+        string yaml = NanoYaml.Serialize(back);
+        Assert.Contains("- 1", yaml);
+        Assert.Contains("- 2", yaml);
+    }
+
+    [Fact]
+    public void CustomMapNestedFlowCounts() {
+        NanoYaml.Serializer serializer = new(new() { AutoFlowMapCount = 10 });
+        string yaml = serializer.Serialize(Modes.Common<StringMap>("a:\n  - 1\n"));
+        Assert.Contains("- 1", yaml);
+    }
+
+    [Fact]
+    public void AddLessCollectionFails() =>
+        Modes.CommonFails<Queue<int>>("- 1\n");
+
     public static TheoryData<string, string> RoundTripCases => new() {
         { "map", "a: 1\nb: x\n" },
         { "nested map", "a:\n  b: 1\n  c: x\n" },

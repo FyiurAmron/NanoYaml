@@ -156,6 +156,21 @@ public static class NanoYaml {
         bool firstLineIndented,
         bool flow);
 
+    delegate void GenericListFiller(
+        object target,
+        List<object> data,
+        Func<object, object?> convert);
+
+    delegate void GenericMapFiller(
+        object target,
+        Dictionary<object, object> data,
+        Func<object, object?> convertKey,
+        Func<object, object?> convertValue);
+
+    delegate int GenericMapCounter(object target, uint cap);
+
+    delegate List<object> GenericMapValues(object target);
+
     /// <summary>
     /// Serializes values using configurable indentation and flow style.
     /// </summary>
@@ -922,6 +937,11 @@ public static class NanoYaml {
                 return count;
             }
 
+            int ChildMapCount(TypeShape shape) =>
+                shape.CountGenericMap is { } counter
+                    ? counter(node, cap)
+                    : shape.Emitted.Count;
+
             int ChildCount() =>
                 !isMap
                     ? node is ICollection collection
@@ -929,7 +949,7 @@ public static class NanoYaml {
                         : ((IEnumerable)node).Cast<object>().Count()
                     : node is IDictionary dict
                         ? KeyCount(dict)
-                        : ShapeOf(node.GetType()).Emitted.Count;
+                        : ChildMapCount(ShapeOf(node.GetType()));
 
             ulong total = (ulong)ChildCount();
             if (total > cap) {
@@ -984,7 +1004,10 @@ public static class NanoYaml {
                     return values;
                 }
 
-                return ShapeOf(node.GetType()).Emitted.Select(member => member.Get!(node));
+                TypeShape shape = ShapeOf(node.GetType());
+                return shape.ValuesGenericMap is { } gather
+                    ? gather(node)
+                    : shape.Emitted.Select(member => member.Get!(node));
             }
 
             return ((IEnumerable)node).Cast<object>();
@@ -1874,30 +1897,43 @@ public static class NanoYaml {
                         : ParseNumber(marker, type);
             }
 
-            IDictionary DeserializeMap(object value, TypeShape shape, int depth) {
+            object DeserializeMap(object value, TypeShape shape, int depth) {
                 if (value is List<object> { Count: 0 }) {
-                    return (IDictionary)Activator.CreateInstance(ConcreteMap(shape))!;
+                    return Activator.CreateInstance(ConcreteMap(shape))!;
                 }
 
                 if (value is not Dictionary<object, object> data) {
                     throw Fail($"Cannot load {Shape(value)} into {shape.Type.Name}");
                 }
 
-                IDictionary result = (IDictionary)Activator.CreateInstance(ConcreteMap(shape))!;
+                object result = Activator.CreateInstance(ConcreteMap(shape))!;
                 TypeShape //
                     keys = shape.KeyShape,
                     values = shape.ValueShape;
-                foreach (KeyValuePair<object, object> entry in data) {
-                    result[DeserializeUnknown(entry.Key, keys, depth + 1)] =
-                        DeserializeUnknown(entry.Value, values, depth + 1);
+                if (result is IDictionary dict) {
+                    foreach (KeyValuePair<object, object> entry in data) {
+                        dict[DeserializeUnknown(entry.Key, keys, depth + 1)] =
+                            DeserializeUnknown(entry.Value, values, depth + 1);
+                    }
+
+                    return result;
                 }
 
-                return result;
+                if (shape.FillGenericMap is { } fill) {
+                    fill(
+                        result,
+                        data,
+                        key => DeserializeUnknown(key, keys, depth + 1),
+                        val => DeserializeUnknown(val, values, depth + 1));
+                    return result;
+                }
+
+                throw Fail($"{shape.Type.Name} needs an indexer");
             }
 
-            IList DeserializeList(object value, TypeShape shape, int depth) {
+            object DeserializeList(object value, TypeShape shape, int depth) {
                 if (value is Dictionary<object, object> { Count: 0 }) {
-                    return (IList)Activator.CreateInstance(ConcreteList(shape))!;
+                    return Activator.CreateInstance(ConcreteList(shape))!;
                 }
 
                 if (value is not List<object> data) {
@@ -1915,12 +1951,22 @@ public static class NanoYaml {
                     return array;
                 }
 
-                IList result = (IList)Activator.CreateInstance(type)!;
-                foreach (object item in data) {
-                    result.Add(DeserializeUnknown(item, element, depth + 1));
+                object result = Activator.CreateInstance(type)!;
+                if (result is IList list) {
+                    foreach (object item in data) {
+                        list.Add(DeserializeUnknown(item, element, depth + 1));
+                    }
+
+                    return result;
                 }
 
-                return result;
+                if (shape.FillGenericList is { } fill) {
+                    TypeShape filled = shape.FillElementShape;
+                    fill(result, data, item => DeserializeUnknown(item, filled, depth + 1));
+                    return result;
+                }
+
+                throw Fail($"{shape.Type.Name} needs Add");
             }
 
             object DeserializeSequence(List<object> sequence, Type type, int depth) {
@@ -2329,12 +2375,15 @@ public static class NanoYaml {
                 Type genericDefinition = type.GetGenericTypeDefinition();
 
                 if (genericDefinition == typeof(IEnumerable<>) ||
-                     genericDefinition == typeof(ICollection<>) ||
-                     genericDefinition == typeof(IList<>)) {
+                    genericDefinition == typeof(ICollection<>) ||
+                    genericDefinition == typeof(IList<>) ||
+                    genericDefinition == typeof(IReadOnlyCollection<>) ||
+                    genericDefinition == typeof(IReadOnlyList<>)) {
                     return typeof(List<>).MakeGenericType(valueType);
                 }
 
-                if (genericDefinition == typeof(ISet<>)) {
+                if (genericDefinition == typeof(ISet<>) ||
+                    genericDefinition == typeof(IReadOnlySet<>)) {
                     return typeof(HashSet<>).MakeGenericType(valueType);
                 }
             }
@@ -2932,9 +2981,22 @@ public static class NanoYaml {
         [typeof(decimal), typeof(float), typeof(string), typeof(DateTime), typeof(DateTimeOffset)];
 
     static readonly ConditionalWeakTable<Type, TypeShape> shapes = new();
-    static readonly MethodInfo genericMapWriterMethod = typeof(Serializer).GetMethod(
-        "WriteGenericMap",
-        BindingFlags.Static | BindingFlags.NonPublic)!;
+    static readonly MethodInfo //
+        genericMapWriterMethod = typeof(Serializer).GetMethod(
+            "WriteGenericMap",
+            BindingFlags.Static | BindingFlags.NonPublic)!,
+        genericListFillerMethod = typeof(NanoYaml).GetMethod(
+            nameof(FillGenericList),
+            BindingFlags.Static | BindingFlags.NonPublic)!,
+        genericMapFillerMethod = typeof(NanoYaml).GetMethod(
+            nameof(FillGenericMap),
+            BindingFlags.Static | BindingFlags.NonPublic)!,
+        genericMapCounterMethod = typeof(NanoYaml).GetMethod(
+            nameof(CountGenericMap),
+            BindingFlags.Static | BindingFlags.NonPublic)!,
+        genericMapValuesMethod = typeof(NanoYaml).GetMethod(
+            nameof(ValuesGenericMap),
+            BindingFlags.Static | BindingFlags.NonPublic)!;
 
     static TypeShape ShapeOf(Type type) =>
         shapes.GetValue(type, static shape => new TypeShape(shape));
@@ -2942,6 +3004,61 @@ public static class NanoYaml {
     static GenericMapWriter CreateGenericMapWriter(Type keyType, Type valueType) =>
         (GenericMapWriter)genericMapWriterMethod.MakeGenericMethod(keyType, valueType)
             .CreateDelegate(typeof(GenericMapWriter));
+
+    static GenericListFiller CreateGenericListFiller(Type elementType) =>
+        (GenericListFiller)genericListFillerMethod.MakeGenericMethod(elementType)
+            .CreateDelegate(typeof(GenericListFiller));
+
+    static GenericMapFiller CreateGenericMapFiller(Type keyType, Type valueType) =>
+        (GenericMapFiller)genericMapFillerMethod.MakeGenericMethod(keyType, valueType)
+            .CreateDelegate(typeof(GenericMapFiller));
+
+    static Type? CollectionFillType(Type type) =>
+        type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ICollection<>)
+            ? type.GetGenericArguments()[0]
+            : type.GetInterfaces().Where(i => i.IsGenericType)
+                .FirstOrDefault(i => i.GetGenericTypeDefinition() == typeof(ICollection<>))
+                ?.GetGenericArguments()[0];
+
+    static void FillGenericList<T>(object target, List<object> data, Func<object, object?> convert) {
+        ICollection<T> list = (ICollection<T>)target;
+        foreach (object item in data) {
+            list.Add((T)convert(item)!);
+        }
+    }
+
+    static void FillGenericMap<TKey, TValue>(
+        object target,
+        Dictionary<object, object> data,
+        Func<object, object?> convertKey,
+        Func<object, object?> convertValue) {
+        IDictionary<TKey, TValue> map = (IDictionary<TKey, TValue>)target;
+        foreach (KeyValuePair<object, object> entry in data) {
+            map[(TKey)convertKey(entry.Key)!] = (TValue)convertValue(entry.Value)!;
+        }
+    }
+
+    static GenericMapCounter CreateGenericMapCounter(Type keyType, Type valueType) =>
+        (GenericMapCounter)genericMapCounterMethod.MakeGenericMethod(keyType, valueType)
+            .CreateDelegate(typeof(GenericMapCounter));
+
+    static GenericMapValues CreateGenericMapValues(Type keyType, Type valueType) =>
+        (GenericMapValues)genericMapValuesMethod.MakeGenericMethod(keyType, valueType)
+            .CreateDelegate(typeof(GenericMapValues));
+
+    static int CountGenericMap<TKey, TValue>(object target, uint cap) {
+        int count = 0;
+        foreach (KeyValuePair<TKey, TValue> entry in (IDictionary<TKey, TValue>)target) {
+            if (entry.Key is not null && ++count > cap) {
+                break;
+            }
+        }
+
+        return count;
+    }
+
+    static List<object> ValuesGenericMap<TKey, TValue>(object target) =>
+        [.. ((IDictionary<TKey, TValue>)target).Where(entry => entry.Key is not null).Select(entry => entry.Value!)];
 
     static bool IsBasicType(Type type) =>
         ShapeOf(type).Basic;
@@ -3285,8 +3402,13 @@ public static class NanoYaml {
         public Type KeyType = typeof(object);
         public Type ValueType = typeof(object);
         public GenericMapWriter? WriteGenericMap;
+        public GenericMapFiller? FillGenericMap;
+        public GenericMapCounter? CountGenericMap;
+        public GenericMapValues? ValuesGenericMap;
         public bool List;
         public Type ElementType = typeof(object);
+        public Type FillElementType = typeof(object);
+        public GenericListFiller? FillGenericList;
 
         public TypeShape(Type type) {
             void AnalyzeMap(Type type) {
@@ -3327,18 +3449,18 @@ public static class NanoYaml {
 
                 if (!type.IsGenericType) {
                     List = typeof(System.Collections.IList).IsAssignableFrom(type);
-                    return;
-                }
-
-                if (type.GetGenericTypeDefinition() == typeof(IEnumerable<>)) {
+                    if (List || type == typeof(string)) {
+                        return;
+                    }
+                } else if (type.GetGenericTypeDefinition() == typeof(IEnumerable<>)) {
                     ElementType = type.GetGenericArguments()[0];
                     List = true;
                     return;
                 }
 
-                Type inherits = type.GetInterfaces().FirstOrDefault(i =>
+                Type? inherits = type.GetInterfaces().FirstOrDefault(i =>
                     i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-                if (inherits == null) {
+                if (inherits is null) {
                     return;
                 }
 
@@ -3475,8 +3597,16 @@ public static class NanoYaml {
             Basic = plain.IsPrimitive || plain.IsEnum || basicNonPrimitive.Contains(plain);
             AnalyzeMap(type);
             AnalyzeList(type);
+            if (List && CollectionFillType(type) is { } fill) {
+                FillElementType = fill;
+                FillGenericList = CreateGenericListFiller(fill);
+            }
+
             if (GenericMap) {
                 WriteGenericMap = CreateGenericMapWriter(KeyType, ValueType);
+                FillGenericMap = CreateGenericMapFiller(KeyType, ValueType);
+                CountGenericMap = CreateGenericMapCounter(KeyType, ValueType);
+                ValuesGenericMap = CreateGenericMapValues(KeyType, ValueType);
             }
 
             analyze = AnalyzeProperties;
@@ -3537,6 +3667,7 @@ public static class NanoYaml {
         TypeShape? keyShape;
         TypeShape? valueShape;
         TypeShape? elementShape;
+        TypeShape? fillElementShape;
         Func<object>? factory;
         Func<List<object>, object>? construct;
 
@@ -3548,6 +3679,9 @@ public static class NanoYaml {
 
         public TypeShape ElementShape =>
             elementShape ??= ShapeOf(ElementType);
+
+        public TypeShape FillElementShape =>
+            fillElementShape ??= ShapeOf(FillElementType);
 
         public object Create() =>
             (factory ??= WarmFactory())();

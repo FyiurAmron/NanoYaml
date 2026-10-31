@@ -18,7 +18,7 @@
   <PropertyGroup>
     <PackageId>NanoYaml</PackageId>
     <Version>0.1.1</Version>
-    <PackageReleaseNotes>[Serialize] opts non-public fields and properties into serialization.</PackageReleaseNotes>
+    <PackageReleaseNotes>[Serialize] opt-in for non-public members; allow deserialization to generic ICollection and IDictionary.</PackageReleaseNotes>
     <Authors>FyiurAmron</Authors>
     <Title>NanoYaml</Title>
     <Description>A strict, YAML 1.2.2-compatible parser and serializer for .NET.</Description>

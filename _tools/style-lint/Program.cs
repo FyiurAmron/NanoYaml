@@ -148,7 +148,25 @@ static class Program {
     static bool ExemptArray(ArrayTypeSyntax array) =>
         array.Parent is ParameterSyntax given
         && (given.Modifiers.Any(m => m.IsKind(SyntaxKind.ParamsKeyword)) || given.Identifier.Text == "args")
-        || ExemptElement(array.ElementType);
+        || ExemptElement(array.ElementType)
+        || ForcedSignature(array);
+
+    static bool ForcedSignature(ArrayTypeSyntax array) =>
+        array.Ancestors().OfType<MemberDeclarationSyntax>().FirstOrDefault() is MemberDeclarationSyntax member
+        && ForcedMember(member)
+        && !array.Ancestors().TakeWhile(node => node != member)
+            .Any(node => node is BlockSyntax or ArrowExpressionClauseSyntax or AccessorDeclarationSyntax or AttributeArgumentSyntax);
+
+    static bool ForcedMember(MemberDeclarationSyntax member) =>
+        member switch {
+            MethodDeclarationSyntax routine => routine.ExplicitInterfaceSpecifier is not null
+                || routine.Modifiers.Any(m => m.IsKind(SyntaxKind.OverrideKeyword)),
+            PropertyDeclarationSyntax held => held.ExplicitInterfaceSpecifier is not null
+                || held.Modifiers.Any(m => m.IsKind(SyntaxKind.OverrideKeyword)),
+            IndexerDeclarationSyntax kept => kept.ExplicitInterfaceSpecifier is not null
+                || kept.Modifiers.Any(m => m.IsKind(SyntaxKind.OverrideKeyword)),
+            _ => false,
+        };
 
     static bool ExemptElement(TypeSyntax? type) =>
         type switch {

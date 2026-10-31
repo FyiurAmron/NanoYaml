@@ -44,7 +44,9 @@ dotnet add package NanoYaml
 
 You can use records, classes and structs, both with properties or bare fields,
 and you can also serialize or deserialize data directly if needed. A value
-is set through the constructor if it takes it, otherwise directly.
+is set through the constructor if it takes it, otherwise directly. Collections
+can be deserialized to both generic `ICollection<>` / `IDictionary<,>` and
+non-generic `IList` / `IDictionary` targets.
 
 ```csharp
 using System.Collections.Generic;

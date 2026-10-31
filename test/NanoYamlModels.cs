@@ -160,3 +160,88 @@ class WithUnmarkedPrivate {
     string secret = "";
     public string Name = "";
 }
+
+class StringBag : ICollection<string> {
+    readonly List<string> items = [];
+
+    public int Count =>
+        items.Count;
+
+    public bool IsReadOnly =>
+        false;
+
+    public void Add(string item) =>
+        items.Add(item);
+
+    public void Clear() =>
+        items.Clear();
+
+    public bool Contains(string item) =>
+        items.Contains(item);
+
+    public bool Remove(string item) =>
+        items.Remove(item);
+
+    public IEnumerator<string> GetEnumerator() =>
+        items.GetEnumerator();
+
+    void ICollection<string>.CopyTo(string[] array, int arrayIndex) =>
+        items.CopyTo(array, arrayIndex);
+
+    IEnumerator IEnumerable.GetEnumerator() =>
+        GetEnumerator();
+}
+
+class StringMap : IDictionary<string, List<int>> {
+    readonly Dictionary<string, List<int>> items = [];
+
+    public int Count =>
+        items.Count;
+
+    public bool IsReadOnly =>
+        false;
+
+    public ICollection<string> Keys =>
+        items.Keys;
+
+    public ICollection<List<int>> Values =>
+        items.Values;
+
+    public List<int> this[string key] {
+        get => items[key];
+        set => items[key] = value;
+    }
+
+    public void Add(string key, List<int> value) =>
+        items.Add(key, value);
+
+    public void Add(KeyValuePair<string, List<int>> entry) =>
+        items.Add(entry.Key, entry.Value);
+
+    public void Clear() =>
+        items.Clear();
+
+    public bool Contains(KeyValuePair<string, List<int>> entry) =>
+        ((ICollection<KeyValuePair<string, List<int>>>)items).Contains(entry);
+
+    public bool ContainsKey(string key) =>
+        items.ContainsKey(key);
+
+    public IEnumerator<KeyValuePair<string, List<int>>> GetEnumerator() =>
+        items.GetEnumerator();
+
+    public bool Remove(string key) =>
+        items.Remove(key);
+
+    public bool Remove(KeyValuePair<string, List<int>> entry) =>
+        ((ICollection<KeyValuePair<string, List<int>>>)items).Remove(entry);
+
+    public bool TryGetValue(string key, out List<int> value) =>
+        items.TryGetValue(key, out value);
+
+    void ICollection<KeyValuePair<string, List<int>>>.CopyTo(KeyValuePair<string, List<int>>[] array, int arrayIndex) =>
+        ((ICollection<KeyValuePair<string, List<int>>>)items).CopyTo(array, arrayIndex);
+
+    IEnumerator IEnumerable.GetEnumerator() =>
+        GetEnumerator();
+}
