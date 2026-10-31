@@ -17,8 +17,8 @@
        README; bump it when the parser or profile changes. -->
   <PropertyGroup>
     <PackageId>NanoYaml</PackageId>
-    <Version>0.1.0</Version>
-    <PackageReleaseNotes>Initial release.</PackageReleaseNotes>
+    <Version>0.1.1</Version>
+    <PackageReleaseNotes>[Serialize] opts non-public fields and properties into serialization.</PackageReleaseNotes>
     <Authors>FyiurAmron</Authors>
     <Title>NanoYaml</Title>
     <Description>A strict, YAML 1.2.2-compatible parser and serializer for .NET.</Description>

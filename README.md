@@ -92,6 +92,9 @@ Host: localhost
 Port: 8080
 ```
 
+By default only public fields and properties are serialized. Use `[Serialize]`
+as an explicit opt-in for non-public data serialization.
+
 Note that, because it's a strict subset, *not all YAML documents can be
 deserialized directly*. If your current data is non-strict and NanoYaml rejects
 it, just load your data with another YAML parser and then serialize

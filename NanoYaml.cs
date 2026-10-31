@@ -15,6 +15,13 @@ using System.Threading;
 namespace Vaxquis.NanoYaml;
 
 /// <summary>
+/// Opts a non-public field or property into YAML serialization.
+/// </summary>
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+public class SerializeAttribute : Attribute {
+}
+
+/// <summary>
 /// Reports a YAML parsing, conversion, or serialization error.
 /// </summary>
 /// <param name="message">
@@ -3345,9 +3352,57 @@ public static class NanoYaml {
                     constructor.GetParameters().Length > 0 &&
                     constructor.GetParameters().All(p => p.Name is string name && names.Contains(name));
 
+                static bool WantedProperty(PropertyInfo property) =>
+                    property.GetIndexParameters().Length == 0
+                    && (property.GetMethod?.IsPublic == true
+                        || property.SetMethod?.IsPublic == true
+                        || property.IsDefined(typeof(SerializeAttribute), true));
+
+                static bool WantedField(FieldInfo field) =>
+                    !field.IsDefined(typeof(CompilerGeneratedAttribute), false)
+                    && (field.IsPublic || field.IsDefined(typeof(SerializeAttribute), true));
+
+                static List<PropertyInfo> InstanceProperties(Type type) {
+                    List<Type> hierarchy = [];
+                    for (Type? current = type; current is not null && current != typeof(object); current = current.BaseType) {
+                        hierarchy.Add(current);
+                    }
+
+                    hierarchy.Reverse();
+                    List<PropertyInfo> properties = [];
+                    foreach (Type current in hierarchy) {
+                        foreach (PropertyInfo property in current.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)) {
+                            properties.Add(property);
+                        }
+                    }
+
+                    return properties;
+                }
+
+                static List<FieldInfo> InstanceFields(Type type) {
+                    List<Type> hierarchy = [];
+                    for (Type? current = type; current is not null && current != typeof(object); current = current.BaseType) {
+                        hierarchy.Add(current);
+                    }
+
+                    hierarchy.Reverse();
+                    List<FieldInfo> fields = [];
+                    foreach (Type current in hierarchy) {
+                        foreach (FieldInfo field in current.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)) {
+                            fields.Add(field);
+                        }
+                    }
+
+                    return fields;
+                }
+
                 static List<Member> Members(Type type, bool compileGetters) {
                     List<Member> members = [];
-                    foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)) {
+                    foreach (PropertyInfo property in InstanceProperties(type)) {
+                        if (!WantedProperty(property)) {
+                            continue;
+                        }
+
                         Member member = new() { Name = property.Name, Type = property.PropertyType };
                         member.Install(
                             hot => property.CanRead ? PropertyGetter(type, property, compileGetters, hot) : null,
@@ -3360,7 +3415,11 @@ public static class NanoYaml {
                         members.Add(member);
                     }
 
-                    foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.Instance)) {
+                    foreach (FieldInfo field in InstanceFields(type)) {
+                        if (!WantedField(field)) {
+                            continue;
+                        }
+
                         Member member = new() { Name = field.Name, Type = field.FieldType };
                         member.Install(
                             hot => FieldGetter(type, field, compileGetters, hot),

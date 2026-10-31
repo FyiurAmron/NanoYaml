@@ -978,6 +978,34 @@ public class NanoYamlCommonTests {
         Assert.Equal(["slim"], after.Dead);
     }
 
+    [Fact]
+    public void PrivateFieldOptInRoundTrips() {
+        var back = Modes.Common<WithPrivateField>("secret: hi\nName: yo\n");
+        Assert.Equal("hi", back.ReadSecret());
+        Assert.Equal("yo", back.Name);
+        string yaml = NanoYaml.Serialize(back);
+        Assert.Contains("secret: hi", yaml);
+        Assert.Contains("Name: yo", yaml);
+    }
+
+    [Fact]
+    public void PrivatePropertyOptInRoundTrips() {
+        var back = Modes.Common<WithPrivateProperty>("Secret: hi\nName: yo\n");
+        Assert.Equal("hi", back.ReadSecret());
+        Assert.Equal("yo", back.Name);
+        string yaml = NanoYaml.Serialize(back);
+        Assert.Contains("Secret: hi", yaml);
+        Assert.Contains("Name: yo", yaml);
+    }
+
+    [Fact]
+    public void UnmarkedPrivateStaysOut() {
+        string yaml = NanoYaml.Serialize(new WithUnmarkedPrivate { Name = "yo" });
+        Assert.Contains("Name: yo", yaml);
+        Assert.DoesNotContain("secret", yaml);
+        Modes.CommonFails<WithUnmarkedPrivate>("secret: hi\nName: yo\n");
+    }
+
     public static TheoryData<string, string> RoundTripCases => new() {
         { "map", "a: 1\nb: x\n" },
         { "nested map", "a:\n  b: 1\n  c: x\n" },

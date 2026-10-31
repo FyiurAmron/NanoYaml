@@ -137,3 +137,26 @@ class TwoWays {
         C = c;
     }
 }
+
+class WithPrivateField {
+    [Serialize]
+    string secret = "";
+    public string Name = "";
+
+    public string ReadSecret() =>
+        secret;
+}
+
+class WithPrivateProperty {
+    [Serialize]
+    string Secret { get; set; } = "";
+    public string Name { get; set; } = "";
+
+    public string ReadSecret() =>
+        Secret;
+}
+
+class WithUnmarkedPrivate {
+    string secret = "";
+    public string Name = "";
+}
