@@ -133,3 +133,6 @@ The results land in `build/artifacts/bench-results` as JSON, and the table above
 comes from `_tools/bench/report.py`. The StrictYAML runner needs Python
 with `strictyaml` installed; the libyaml runner needs `curl` and a C
 compiler; the .NET runners need only the .NET SDK.
+
+CI runs a reduced NanoYaml-vs-SharpYaml comparison (one run, ten
+seconds per corpus and mode) and uploads the JSON as an artifact.

@@ -53,3 +53,27 @@ jobs:
 
       - name: Pack
         run: dotnet pack NanoYaml.csproj -c Release --no-build --no-restore -o "${RUNNER_TEMP}/packages"
+
+  bench:
+    name: Benchmark (NanoYaml vs SharpYaml)
+    needs: style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # A reduced run for CI: one run, two parsers, ten seconds per corpus
+      # and mode. The full comparison is `bash _tools/bench/run.sh` locally.
+      - name: Run benchmarks
+        run: bash _tools/bench/run.sh "${RUNNER_TEMP}/bench-corpus" "${RUNNER_TEMP}/bench-results" 1 "nano sharpyaml" 10
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: ${{ runner.temp }}/bench-results/
