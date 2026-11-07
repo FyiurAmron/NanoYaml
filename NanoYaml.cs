@@ -2076,8 +2076,12 @@ public static class NanoYaml {
                             : null!;
             }
 
-            Type type = shape.Type;
-            return depth > settings.MaxDepth
+            Type //
+                type = shape.Type,
+                inner = UnwrapNullable(type);
+            return obj is not null && inner != type
+                ? DeserializeUnknown(obj, ShapeOf(inner), depth)
+                : depth > settings.MaxDepth
                 ? throw Fail($"Nesting past {settings.MaxDepth} deep")
                 : obj is null
                     ? Null(shape)

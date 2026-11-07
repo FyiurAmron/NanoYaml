@@ -17,8 +17,8 @@
        README; bump it when the parser or profile changes. -->
   <PropertyGroup>
     <PackageId>NanoYaml</PackageId>
-    <Version>0.1.1</Version>
-    <PackageReleaseNotes>[Serialize] opt-in for non-public members; allow deserialization to generic ICollection and IDictionary.</PackageReleaseNotes>
+    <Version>0.1.2</Version>
+    <PackageReleaseNotes>Deserialization of Nullable struct from sequence and map nodes.</PackageReleaseNotes>
     <Authors>FyiurAmron</Authors>
     <Title>NanoYaml</Title>
     <Description>A strict, YAML 1.2.2-compatible parser and serializer for .NET.</Description>

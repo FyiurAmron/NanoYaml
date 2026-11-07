@@ -245,3 +245,19 @@ class StringMap : IDictionary<string, List<int>> {
     IEnumerator IEnumerable.GetEnumerator() =>
         GetEnumerator();
 }
+
+struct Point3 {
+    public int X;
+    public int Y;
+    public int Z;
+
+    public Point3(int x, int y, int z) {
+        X = x;
+        Y = y;
+        Z = z;
+    }
+}
+
+record Room(int Id, Point3? Pos);
+
+record Num(int? N);

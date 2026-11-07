@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2] - 2026-11-07
+
+### Added
+
+- Deserialization of `Nullable<T>` from sequence and map nodes.
+
 ## [0.1.1] - 2026-10-31
 
 ### Added

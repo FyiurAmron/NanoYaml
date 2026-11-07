@@ -825,6 +825,36 @@ public class NanoYamlCommonTests {
     }
 
     [Fact]
+    public void NullableStructFromSequence() {
+        var room = Modes.Common<Room>("Id: 0\nPos: [2, 5, 0]\n");
+        Assert.Equal(new Point3(2, 5, 0), room.Pos);
+    }
+
+    [Fact]
+    public void NullableStructFromMap() {
+        var room = Modes.Common<Room>("Id: 0\nPos: {X: 2, Y: 5, Z: 0}\n");
+        Assert.Equal(new Point3(2, 5, 0), room.Pos);
+    }
+
+    [Fact]
+    public void MissingNullableStructIsNull() {
+        var room = Modes.Common<Room>("Id: 0\n");
+        Assert.Null(room.Pos);
+    }
+
+    [Fact]
+    public void ExplicitNullStaysNull() {
+        var room = Modes.Common<Room>("Id: 0\nPos: ~\n");
+        Assert.Null(room.Pos);
+    }
+
+    [Fact]
+    public void NullableIntFromScalar() {
+        var num = Modes.Common<Num>("N: 5\n");
+        Assert.Equal(5, num.N);
+    }
+
+    [Fact]
     public void ScalarDocLoads() {
         Assert.Equal("abc", Modes.Common<string>("abc\n"));
         Assert.Equal("a: b", Modes.Common<string>("\"a: b\"\n"));
