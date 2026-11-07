@@ -18,8 +18,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
-CORPUS="${1:-$ROOT/artifacts/bench-corpus}"
-RESULTS="${2:-$ROOT/artifacts/bench-results}"
+CORPUS="${1:-$ROOT/build/artifacts/bench-corpus}"
+RESULTS="${2:-$ROOT/build/artifacts/bench-results}"
 RUNS="${3:-3}"
 PARSERS="${4:-nano sharpyaml libyaml}"
 SECONDS_PER_RUN="${5:-10}"
@@ -29,7 +29,7 @@ mkdir -p "$RESULTS"
 
 echo "==> Corpora..."
 dotnet build "$SCRIPT_DIR" -c Release --nologo -v quiet
-BENCH="$SCRIPT_DIR/bin/Release/net10.0/bench.dll"
+BENCH="$ROOT/build/bin/bench/Release/net10.0/bench.dll"
 dotnet "$BENCH" generate "$CORPUS"
 
 LIBYAML=""

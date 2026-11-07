@@ -1,0 +1,10 @@
+<Project>
+  <!-- All build output goes under build/, per project, so the working tree
+       stays clean and .gitignore only needs build/. -->
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)build/bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)build/artifacts/</PackageOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildThisFileDirectory)build/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

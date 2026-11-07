@@ -316,7 +316,7 @@ check_text_files() {
     local file fail=0
     for file in "$@"; do
         case "$file" in
-            artifacts/* | .godot/*) continue ;;
+            build/* | .godot/*) continue ;;
         esac
         is_text_file "$file" || continue
         check_text_file "$file" || fail=1

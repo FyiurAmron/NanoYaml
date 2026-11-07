@@ -129,7 +129,7 @@ Even then, it's negligible in all practical situations.
 bash _tools/bench/run.sh
 ```
 
-The results land in `artifacts/bench-results` as JSON, and the table above
+The results land in `build/artifacts/bench-results` as JSON, and the table above
 comes from `_tools/bench/report.py`. The StrictYAML runner needs Python
 with `strictyaml` installed; the libyaml runner needs `curl` and a C
 compiler; the .NET runners need only the .NET SDK.

@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
-BUILD="${1:-$ROOT/artifacts/libyaml}"
+BUILD="${1:-$ROOT/build/artifacts/libyaml}"
 
 VERSION=0.2.5
 SHA256=c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4
